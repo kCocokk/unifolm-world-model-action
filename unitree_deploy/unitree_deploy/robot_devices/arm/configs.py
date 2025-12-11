@@ -80,3 +80,31 @@ class G1ArmConfig(ArmConfig):
     def __post_init__(self):
         if self.control_dt < 0.002:
             raise ValueError(f"`control_dt` must > 1/500 (got {self.control_dt})")
+
+
+@ArmConfig.register_subclass("d1")
+@dataclass
+class D1ArmConfig(ArmConfig):
+    """D1 机械臂的配置，模仿 Z1/G1 的风格。"""
+
+    motors: dict[str, tuple[int, str]]
+
+    # 初始姿态（弧度制），长度 7（6 关节 + 1 夹爪）
+    init_pose: list | None = None
+    unit_test: bool = False
+
+    # D1 的控制周期为 10Hz
+    control_dt: float = 0.1
+
+    # DDS / 网络相关配置
+    ip: str = "192.168.123.100"
+    topic_command: str = "rt/arm_Command"
+    topic_feedback: str = "rt/arm_Feedback"
+    topic_servo_angle: str = "current_servo_angle"
+
+    log_level: str | int = "ERROR"
+
+    def __post_init__(self):
+        # 这里不做很严格的 dt 限制，只要 >0 即可
+        if self.control_dt <= 0:
+            raise ValueError(f"`control_dt` must > 0 (got {self.control_dt})")

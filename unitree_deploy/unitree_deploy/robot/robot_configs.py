@@ -9,6 +9,7 @@ from unitree_deploy.robot_devices.arm.configs import (
     G1ArmConfig,
     Z1ArmConfig,
     Z1DualArmConfig,
+    D1ArmConfig,
 )
 from unitree_deploy.robot_devices.cameras.configs import (
     CameraConfig,
@@ -63,7 +64,17 @@ z1_dual_motors = {
         "kRightForearmRoll": [10, "z1-joint"],
         "kRightWristAngle": [11, "z1-joint"],
         "kRightWristRotate": [12, "z1-joint"],
-}
+
+# D1: 6 关节 + 1 夹爪
+d1_motors = {
+    "J0": [0, "d1-joint"],
+    "J1": [1, "d1-joint"],
+    "J2": [2, "d1-joint"],
+    "J3": [3, "d1-joint"],
+    "J4": [4, "d1-joint"],
+    "J5": [5, "d1-joint"],
+    "J6": [6, "d1-joint"],  # 夹爪
+}}
 # =========================================================
 
 
@@ -109,6 +120,16 @@ def z1_dual_intelrealsense_camera_default_factory():
         ),
     }
 
+def d1_intelrealsense_camera_default_factory():
+    """D1 使用一只 RealSense 深度相机，挂在机架或末端上方。"""
+    return {
+        "cam_high": IntelRealSenseCameraConfig(
+            serial_number="YOUR_D435_SERIAL",  # 用 rs-enumerate-devices 查到的序列号
+            fps=30,
+            width=640,
+            height=480,
+        ),
+    }
 
 def g1_image_client_default_factory():
     return {
@@ -216,6 +237,22 @@ def g1_dual_arm_default_factory(init_pose=None):
         ),
     }
 
+def d1_arm_default_factory(init_pose=None):
+    if init_pose is None:
+        init_pose = np.zeros(7, dtype=float)
+    init_pose = np.asarray(init_pose, dtype=float).tolist()
+
+    return {
+        "d1": D1ArmConfig(
+            motors=d1_motors,
+            init_pose=init_pose,
+            ip="192.168.123.100",  # 按你的实际 D1 IP 改
+            topic_command="rt/arm_Command",
+            topic_feedback="rt/arm_Feedback",
+            topic_servo_angle="current_servo_angle",
+        )
+    }
+
 
 # =========================================================
 
@@ -268,3 +305,30 @@ class G1_Dex1_Imageclint_RobotConfig(UnitreeRobotConfig):
     cameras: dict[str, CameraConfig] = field(default_factory=g1_image_client_default_factory)
     arm: dict[str, ArmConfig] = field(default_factory=g1_dual_arm_default_factory)
     endeffector: dict[str, EndEffectorConfig] = field(default_factory=dex1_default_factory)
+
+@RobotConfig.register_subclass("d1_realsense")
+@dataclass
+class D1_Realsense_RobotConfig(UnitreeRobotConfig):
+    """单臂 D1 + 顶视 RealSense 相机（推荐）。"""
+
+    cameras: dict[str, CameraConfig] = field(default_factory=d1_intelrealsense_camera_default_factory)
+    arm: dict[str, ArmConfig] = field(default_factory=d1_arm_default_factory)
+    # D1 自带夹爪就当作第 7 关节，不再单独建 endeffector
+    endeffector: dict[str, EndEffectorConfig] = field(default_factory=lambda: {})
+
+@RobotConfig.register_subclass("d1_only_arm")
+@dataclass
+class D1_OnlyArm_RobotConfig(UnitreeRobotConfig):
+    # 不带摄像头
+    cameras: dict[str, CameraConfig] = field(default_factory=lambda: {})
+    # 只挂一只 D1 机械臂
+    arm: dict[str, ArmConfig] = field(
+        default_factory=lambda: {
+            "d1": D1ArmConfig(
+                motors=d1_motors,
+                init_pose=np.zeros(7),
+            )
+        }
+    )
+    # 暂时没有独立 endeffector（夹爪当成第 7 关节）
+    endeffector: dict[str, EndEffectorConfig] = field(default_factory=lambda: {})

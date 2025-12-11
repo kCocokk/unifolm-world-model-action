@@ -1,6 +1,6 @@
 from typing import Protocol
 
-from unitree_deploy.robot_devices.arm.configs import ArmConfig, G1ArmConfig, Z1ArmConfig, Z1DualArmConfig
+from unitree_deploy.robot_devices.arm.configs import ArmConfig, G1ArmConfig, Z1ArmConfig, Z1DualArmConfig, D1ArmConfig
 
 
 class Arm(Protocol):
@@ -35,6 +35,10 @@ def make_arm_motors_buses_from_configs(armconfig: dict[str, ArmConfig]) -> list[
             from unitree_deploy.robot_devices.arm.z1_dual_arm import Z1_12_ArmController
 
             arm_motors_buses[key] = Z1_12_ArmController(cfg)
+        elif cfg.type == "d1":   # ✅ 新增 D1 分支（多臂 config 用）
+            from unitree_deploy.robot_devices.arm.d1_arm import D1_ArmController
+
+            arm_motors_buses[key] = D1_ArmController(cfg)
         else:
             raise ValueError(f"The motor type '{cfg.type}' is not valid.")
 
@@ -59,5 +63,10 @@ def make_arm_motors_bus(arm_type: str, **kwargs) -> Arm:
 
         config = G1ArmConfig(**kwargs)
         return G1_29_ArmController(config)
+    elif arm_type == "d1":   # ✅ 新增 D1 分支（单机测试用）
+        from unitree_deploy.robot_devices.arm.d1_arm import D1_ArmController
+
+        config = D1ArmConfig(**kwargs)
+        return D1_ArmController(config)
     else:
         raise ValueError(f"The motor type '{arm_type}' is not valid.")

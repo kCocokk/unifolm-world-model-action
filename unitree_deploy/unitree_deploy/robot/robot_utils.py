@@ -6,6 +6,8 @@ from unitree_deploy.robot.robot_configs import (
     Z1_Realsense_RobotConfig,
     Z1dual_Dex1_Opencv_RobotConfig,
     Z1dual_Dex1_Realsense_RobotConfig,
+    D1_Realsense_RobotConfig,
+    D1_OnlyArm_RobotConfig, 
 )
 
 
@@ -32,6 +34,10 @@ def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
         return Z1dual_Dex1_Opencv_RobotConfig(**kwargs)
     elif robot_type == "g1_dex1":
         return G1_Dex1_Imageclint_RobotConfig(**kwargs)
+    elif robot_type == "d1_realsense":
+        return D1_Realsense_RobotConfig(**kwargs)
+    elif robot_type == "d1_only_arm":               # 新增
+        return D1_OnlyArm_RobotConfig(**kwargs)
     else:
         raise ValueError(f"Robot type '{robot_type}' is not available.")
 
