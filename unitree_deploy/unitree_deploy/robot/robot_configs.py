@@ -64,6 +64,7 @@ z1_dual_motors = {
         "kRightForearmRoll": [10, "z1-joint"],
         "kRightWristAngle": [11, "z1-joint"],
         "kRightWristRotate": [12, "z1-joint"],
+}
 
 # D1: 6 关节 + 1 夹爪
 d1_motors = {
@@ -74,7 +75,7 @@ d1_motors = {
     "J4": [4, "d1-joint"],
     "J5": [5, "d1-joint"],
     "J6": [6, "d1-joint"],  # 夹爪
-}}
+}
 # =========================================================
 
 
