@@ -1,8 +1,8 @@
 model_name=testing
-ckpt=/path/to/model/checkpoint
+ckpt=/home/coco/model/unifolm_checkpoints/Dual/unifolm_wma_dual.ckpt
 config=configs/inference/world_model_decision_making.yaml
 seed=123
-res_dir="path/to/results/directory"
+res_dir="/home/coco/model/unifolm_results/Dual"
 datasets=(
     "unitree_g1_pack_camera"
 )
