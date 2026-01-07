@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# repo root = .../unifolm-world-model-action
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 # -------- user-editable --------
-CONFIG="${CONFIG:-configs/inference/world_model_decision_making.yaml}"
+CONFIG="${CONFIG:-${ROOT_DIR}/configs/inference/world_model_decision_making.yaml}"
 CKPT_PATH="${CKPT_PATH:-/data6/user24215463/unifolm_checkpoints/Dual/unifolm_wma_dual.ckpt}"
 SAVEDIR="${SAVEDIR:-/tmp/unifolm_server}"
+
 # bind address/port (SSH tunnel: 127.0.0.1; public service: 0.0.0.0)
 export UNIFOLM_SERVER_HOST="${UNIFOLM_SERVER_HOST:-127.0.0.1}"
 export UNIFOLM_SERVER_PORT="${UNIFOLM_SERVER_PORT:-8000}"
 
-# inference params (fp32 on server, no need to save memory)
+# inference params (fp32 on server)
 BS="${BS:-1}"
 H="${H:-320}"
 W="${W:-512}"
@@ -32,23 +34,27 @@ python3 - <<PY
 from omegaconf import OmegaConf
 import os
 
+root = "${ROOT_DIR}"
 cfg = OmegaConf.load("${CONFIG}")
-# set a valid example dir so DataModule can build normalizer/mapping
-example_dir = os.path.join("${ROOT_DIR}", "examples", "world_model_interaction_prompts")
+
+example_dir = os.path.join(root, "examples", "world_model_interaction_prompts")
 cfg.data.params.test.params.data_dir = example_dir
+
 OmegaConf.save(cfg, "${TMP_CONFIG}")
 print("Wrote runtime config:", "${TMP_CONFIG}")
 print("data_dir ->", example_dir)
 PY
 
+echo "[Repo]   ROOT_DIR=${ROOT_DIR}"
 echo "[Server] host=${UNIFOLM_SERVER_HOST} port=${UNIFOLM_SERVER_PORT}"
 echo "[Server] ckpt=${CKPT_PATH}"
 echo "[Server] savedir=${SAVEDIR}"
+echo "[Server] config=${TMP_CONFIG}"
 
 mkdir -p "${SAVEDIR}"
 
 # -------- launch server --------
-CMD=(python3 -u scripts/evaluation/real_eval_server.py
+CMD=(python3 -u "${ROOT_DIR}/scripts/evaluation/real_eval_server.py"
   --seed "${SEED}"
   --ckpt_path "${CKPT_PATH}"
   --config "${TMP_CONFIG}"

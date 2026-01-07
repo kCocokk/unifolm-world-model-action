@@ -449,12 +449,12 @@ class Server:
             host = os.environ.get("UNIFOLM_SERVER_HOST", "127.0.0.1")
         if port is None:
             port = int(os.environ.get("UNIFOLM_SERVER_PORT", "8000"))
-         self.app = FastAPI()
-         self.app.post("/predict_action")(self.predict_action)
-         print(">>> Inference server is ready ... ")
-         uvicorn.run(self.app, host=host, port=port)
-         print(">>> Inference server stops ... ")
-         retur
+        self.app = FastAPI()
+        self.app.post("/predict_action")(self.predict_action)
+        print(">>> Inference server is ready ... ")
+        uvicorn.run(self.app, host=host, port=port)
+        print(">>> Inference server stops ... ")
+        retur
 
 
 if __name__ == '__main__':
