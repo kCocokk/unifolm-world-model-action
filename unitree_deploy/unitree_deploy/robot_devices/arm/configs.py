@@ -96,7 +96,25 @@ class D1ArmConfig(ArmConfig):
     # D1 的控制周期为 10Hz
     control_dt: float = 0.1
 
-    # DDS / 网络相关配置
+    # Python bridge（推荐）：d1_bridge.cpp 本地监听地址
+    bridge_host: str = "127.0.0.1"
+    bridge_port: int = 5555
+
+    # 反馈轮询周期（GET_Q），建议 >= control_dt
+    feedback_dt: float = 0.1
+
+    # 轨迹插值速度限制（对齐 z1/g1 的 JointTrajectoryInterpolator）
+    max_pos_speed: float = 120 * (np.pi / 180)  # rad/s（整体关节空间速度）
+    max_gripper_speed: float = 2.0  # norm/s（夹爪归一化速度）
+
+    # 关节安全范围缩放：1.0=全范围；0.95=留 5% 裕量
+    safe_range_scale: float = 0.95
+
+    # 夹爪行程（mm），用于 norm[-1,1] <-> mm 的映射
+    gripper_min_mm: float = 0.0
+    gripper_max_mm: float = 65.0
+
+    # DDS / 网络相关配置（保留给未来直接 DDS 控制用；当前 python 走 bridge）
     ip: str = "192.168.123.100"
     topic_command: str = "rt/arm_Command"
     topic_feedback: str = "rt/arm_Feedback"
@@ -108,3 +126,20 @@ class D1ArmConfig(ArmConfig):
         # 这里不做很严格的 dt 限制，只要 >0 即可
         if self.control_dt <= 0:
             raise ValueError(f"`control_dt` must > 0 (got {self.control_dt})")
+        if self.feedback_dt <= 0:
+            raise ValueError(f"`feedback_dt` must > 0 (got {self.feedback_dt})")
+
+        if self.bridge_port <= 0 or self.bridge_port > 65535:
+            raise ValueError(f"`bridge_port` invalid (got {self.bridge_port})")
+
+        if self.max_pos_speed <= 0:
+            raise ValueError(f"`max_pos_speed` must > 0 (got {self.max_pos_speed})")
+
+        if self.max_gripper_speed <= 0:
+            raise ValueError(f"`max_gripper_speed` must > 0 (got {self.max_gripper_speed})")
+
+        if self.gripper_max_mm <= self.gripper_min_mm:
+            raise ValueError(f"`gripper_max_mm` must > `gripper_min_mm` (got {self.gripper_min_mm}, {self.gripper_max_mm})")
+
+        if not (0.1 <= float(self.safe_range_scale) <= 1.0):
+            raise ValueError(f"`safe_range_scale` must be in [0.1,1.0] (got {self.safe_range_scale})")

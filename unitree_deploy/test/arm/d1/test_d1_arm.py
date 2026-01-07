@@ -1,3 +1,14 @@
+# unitree_deploy/test/arm/d1/test_d1_arm.py
+#
+# 目的：不依赖摄像头，验证 D1（通过 d1_bridge）能连接、读关节、并做一个很小的关节运动。
+#
+# 运行：
+#   python -m unitree_deploy.test.arm.d1.test_d1_arm
+# 或：
+#   python unitree_deploy/test/arm/d1/test_d1_arm.py
+#
+# 注意：确保 d1_bridge 已启动且能与机械臂通信。
+
 import time
 import numpy as np
 
@@ -6,39 +17,38 @@ from unitree_deploy.utils.rich_logger import log_info, log_success, log_error
 
 
 def main():
-    robot_type = "d1_only_arm"  # 对应你在 robot_configs.py 里注册的 D1 机器人类型
+    robot_type = "d1_only_arm"
     log_info(f"[test_d1_arm] Creating robot '{robot_type}' ...")
     robot = make_robot(robot_type)
 
     try:
-        log_info("[test_d1_arm] Connecting to D1 (via d1_bridge) ...")
+        log_info("[test_d1_arm] Connecting ...")
         robot.connect()
-        log_success("[test_d1_arm] Robot connected.")
+        log_success("[test_d1_arm] Connected.")
 
-        if not robot.arm:
-            log_error("[test_d1_arm] robot.arm 为空，请检查 RobotConfig 配置。")
-            return
+        # 读取当前关节
+        arm = next(iter(robot.arm.values()))
+        q = arm.read_current_arm_q().copy()
+        log_info(f"[test_d1_arm] current q (rad+gripper_norm): {q}")
 
-        arm_name, arm = list(robot.arm.items())[0]
-        log_info(f"[test_d1_arm] Using arm '{arm_name}'.")
+        # 做一个非常小的运动：J0 + 0.05 rad（约 3°）
+        q_target = q.copy()
+        q_target[0] = float(np.clip(q_target[0] + 0.05, -2.35, 2.35))
+        log_info(f"[test_d1_arm] sending small motion, q_target[0]={q_target[0]:.4f} rad")
+        arm.write_arm(q_target, cmd_target="schedule_waypoint", time_target=time.perf_counter() + 0.8)
 
-        # 读取当前关节角
-        q = arm.read_current_arm_q()
-        log_info(f"[test_d1_arm] current q (rad): {q}")
+        time.sleep(1.2)
 
-        # 在当前姿态基础上，让第 0 号关节 +10°
-        q_cmd = np.array(q, dtype=float)
-        q_cmd[0] += np.deg2rad(10.0)
+        # 回到原位
+        log_info("[test_d1_arm] return to original pose")
+        arm.write_arm(q, cmd_target="schedule_waypoint", time_target=time.perf_counter() + 0.8)
 
-        log_info("[test_d1_arm] Sending +10deg command on joint 0 ...")
-        arm.write_arm(q_cmd)
+        time.sleep(1.2)
+        log_success("[test_d1_arm] DONE. 请确认 D1 J0 有小幅往返运动。")
 
-        # 等 2 秒让机械臂动完
-        time.sleep(2.0)
-
-        q_new = arm.read_current_arm_q()
-        log_info(f"[test_d1_arm] new q (rad): {q_new}")
-        log_success("[test_d1_arm] DONE, 请观察 D1 底座关节是否有小幅旋转。")
+    except Exception as e:
+        log_error(f"[test_d1_arm] FAILED: {e}")
+        raise
 
     finally:
         try:

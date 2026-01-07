@@ -7,7 +7,10 @@ from unitree_deploy.robot.robot_configs import (
     Z1dual_Dex1_Opencv_RobotConfig,
     Z1dual_Dex1_Realsense_RobotConfig,
     D1_Realsense_RobotConfig,
-    D1_OnlyArm_RobotConfig, 
+    D1_OnlyArm_RobotConfig,
+    # ✅ 新增：OpenCV 相机版 D1（主/从）
+    D1_Opencv_RobotConfig,
+    D1_Opencv_Slave_RobotConfig,
 )
 
 
@@ -34,17 +37,27 @@ def make_robot_config(robot_type: str, **kwargs) -> RobotConfig:
         return Z1dual_Dex1_Opencv_RobotConfig(**kwargs)
     elif robot_type == "g1_dex1":
         return G1_Dex1_Imageclint_RobotConfig(**kwargs)
+
+    # ---------------- D1 ----------------
     elif robot_type == "d1_realsense":
         return D1_Realsense_RobotConfig(**kwargs)
-    elif robot_type == "d1_only_arm":               # 新增
+    elif robot_type == "d1_only_arm":
         return D1_OnlyArm_RobotConfig(**kwargs)
+
+    # ✅ 新增：D1 + OpenCV 相机（主桥接）
+    elif robot_type == "d1_opencv":
+        return D1_Opencv_RobotConfig(**kwargs)
+
+    # ✅ 新增：D1 + OpenCV 相机（从桥接）
+    elif robot_type == "d1_opencv_slave":
+        return D1_Opencv_Slave_RobotConfig(**kwargs)
+
     else:
         raise ValueError(f"Robot type '{robot_type}' is not available.")
 
 
 def make_robot_from_config(config: RobotConfig):
     from unitree_deploy.robot.robot import UnitreeRobot
-
     return UnitreeRobot(config)
 
 

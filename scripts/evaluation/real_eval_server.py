@@ -411,7 +411,7 @@ class Server:
                 observation,
                 self.noise_shape_,
                 ddim_steps=args.ddim_steps,
-                ddim_ets=args.ddim_eta,
+                ddim_eta=args.ddim_eta,
                 unconditional_guidance_scale=args.unconditional_guidance_scale,
                 fs=30 / args.frame_stride,
                 timestep_spacing=args.timestep_spacing,
