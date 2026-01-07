@@ -443,13 +443,18 @@ class Server:
                 "de-normalizing the output actions.")
             return {'result': 'error', 'desc': traceback.format_exc()}
 
-    def run(self, host: str = "127.0.0.1", port: int = 8000) -> None:
-        self.app = FastAPI()
-        self.app.post("/predict_action")(self.predict_action)
-        print(">>> Inference server is ready ... ")
-        uvicorn.run(self.app, host=host, port=port)
-        print(">>> Inference server stops ... ")
-        return
+    def run(self, host: str | None = None, port: int | None = None) -> None:
+        # allow remote bind via env
+        if host is None:
+            host = os.environ.get("UNIFOLM_SERVER_HOST", "127.0.0.1")
+        if port is None:
+            port = int(os.environ.get("UNIFOLM_SERVER_PORT", "8000"))
+         self.app = FastAPI()
+         self.app.post("/predict_action")(self.predict_action)
+         print(">>> Inference server is ready ... ")
+         uvicorn.run(self.app, host=host, port=port)
+         print(">>> Inference server stops ... ")
+         retur
 
 
 if __name__ == '__main__':
