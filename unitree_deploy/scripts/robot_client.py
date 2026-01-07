@@ -31,16 +31,21 @@ INIT_POSE = {
     'g1_dex1': np.array([0.10559805, 0.02726714, -0.01210221, -0.33341318, -0.22513399, -0.02627627, -0.15437093,  0.1273793 , -0.1674708 , -0.11544029, -0.40095493,  0.44332668,  0.11566751,  0.3936641, 5.4, 5.4], dtype=np.float32),
     'z1_dual_dex1_realsense': np.array([-1.0262332,  1.4281361, -1.2149128,  0.6473399, -0.12425245, 0.44945636,  0.89584476,  1.2593982, -1.0737865,  0.6672816, 0.39730102, -0.47400007, 0.9894176, 0.9817477 ], dtype=np.float32),
     'z1_realsense': np.array([-0.06940782, 1.4751548, -0.7554075, 1.0501366, 0.02931615, -0.02810347, -0.99238837], dtype=np.float32),
+    # D1: 默认用“当前姿态”作为 warm start，避免一上电就跳到某个固定关节角
+    # 这里填 None，run_policy 里会自动读取 env 当前 qpos。
+    'd1_opencv_slave': None,
 }
 ZERO_ACTION = {
     'g1_dex1': torch.zeros(16, dtype=torch.float32),
     'z1_dual_dex1_realsense': torch.zeros(14, dtype=torch.float32),
     'z1_realsense': torch.zeros(7, dtype=torch.float32),
+    'd1_opencv_slave': torch.zeros(7, dtype=torch.float32),
 }
 CAM_KEY = {
     'g1_dex1': 'cam_right_high',
     'z1_dual_dex1_realsense': 'cam_high',
     'z1_realsense': 'cam_high',
+    'd1_opencv_slave': 'cam_high',
 }
 # fmt: on
 
@@ -77,7 +82,17 @@ def run_policy(
         4) execute with temporal ensembling for smoother control.
     """
 
-    _ = env.step(INIT_POSE[args.robot_type])
+    # Warm start: 如果没有预置 init pose（例如 D1），就用当前关节角作为 init pose
+    init_pose = INIT_POSE.get(args.robot_type, None)
+    if init_pose is None:
+        try:
+            obs0 = env.get_observation(0)
+            init_pose = np.asarray(obs0.observation["qpos"], dtype=np.float32)
+        except Exception:
+            init_pose = None
+
+    if init_pose is not None:
+        _ = env.step(init_pose)
     time.sleep(2.0)
     t = 0
 
