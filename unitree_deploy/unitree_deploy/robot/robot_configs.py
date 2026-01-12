@@ -83,7 +83,7 @@ d1_motors = {
 # ======================== helpers =================================
 def _normalize_video_device(dev: str) -> str:
     """
-    Accept '/dev/video2' or '2' or 'video2' and normalize to '/dev/video2'.
+    Accept '/dev/video3' or '3' or 'video3' and normalize to '/dev/video3'.
     """
     d = str(dev).strip()
     if d.isdigit():
@@ -202,12 +202,12 @@ def d1_opencv_camera_default_factory():
     D1 外接 USB 摄像头（如 Logitech C925e），通过 OpenCV 读取。
 
     环境变量：
-      - D1_CAM_DEVICE: '/dev/video2' 或 '2' 或 'video2'（默认 /dev/video2）
+      - D1_CAM_DEVICE: '/dev/video3' 或 '3' 或 'video3'（默认 /dev/video3）
       - D1_CAMERA_WIDTH: 默认 640
       - D1_CAMERA_HEIGHT: 默认 480
       - D1_CAMERA_FPS: 默认 30
     """
-    dev = _normalize_video_device(os.getenv("D1_CAM_DEVICE", "/dev/video2"))
+    dev = _normalize_video_device(os.getenv("D1_CAM_DEVICE", "/dev/video3"))
     w = _env_int("D1_CAMERA_WIDTH", 640)
     h = _env_int("D1_CAMERA_HEIGHT", 480)
     fps = _env_float("D1_CAMERA_FPS", 30.0)

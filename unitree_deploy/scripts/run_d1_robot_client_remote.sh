@@ -9,7 +9,7 @@ export D1_ROBOT_TYPE="${D1_ROBOT_TYPE:-d1_opencv_slave}"
 export D1_BRIDGE_HOST="${D1_BRIDGE_HOST:-127.0.0.1}"
 export D1_BRIDGE_PORT="${D1_BRIDGE_PORT:-5556}"
 
-export D1_CAM_DEVICE="${D1_CAM_DEVICE:-/dev/video2}"
+export D1_CAM_DEVICE="${D1_CAM_DEVICE:-/dev/video3}"
 export D1_CAMERA_WIDTH="${D1_CAMERA_WIDTH:-640}"
 export D1_CAMERA_HEIGHT="${D1_CAMERA_HEIGHT:-480}"
 export D1_CAMERA_FPS="${D1_CAMERA_FPS:-30}"
