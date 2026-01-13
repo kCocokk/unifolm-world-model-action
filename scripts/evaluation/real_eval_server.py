@@ -367,7 +367,7 @@ class Server:
     def normalize_image(self, image: torch.Tensor) -> torch.Tensor:
         return (image / 255 - 0.5) * 2
 
-    def predict_action(self, payload: Dict[str, Any]) -> Any:
+def predict_action(self, payload: Dict[str, Any]) -> Any:
         try:
             images = payload['observation.images.top']
             states = payload['observation.state']
@@ -379,13 +379,24 @@ class Server:
                 self.dataset_name].spatial_transform(images).unsqueeze(0)
             images = self.normalize_image(images)
             print(f"images shape: {images.shape} ...")
+
             states = torch.tensor(states)
+            # ---- FIX: normalizer expects (T, D), but client may send (D, T) ----
+            if states.ndim == 2 and states.shape[0] in (6, 7, 14) and states.shape[1] != states.shape[0]:
+                states = states.t().contiguous()
+            # -------------------------------------------------------------------
             states = self.data_.test_datasets[self.dataset_name].normalizer(
                 {'observation.state': states})['observation.state']
+
             states, _ = self.data_.test_datasets[
                 self.dataset_name]._map_to_uni_state(states, "joint position")
             print(f"states shape: {states.shape} ...")
+
             actions = torch.tensor(actions)
+            # ---- FIX: _map_to_uni_action expects (T, D) too ----
+            if actions.ndim == 2 and actions.shape[0] in (6, 7, 14) and actions.shape[1] != actions.shape[0]:
+                actions = actions.t().contiguous()
+            # ---------------------------------------------------
             actions, action_mask = self.data_.test_datasets[
                 self.dataset_name]._map_to_uni_action(actions,
                                                       "joint position")
@@ -454,7 +465,7 @@ class Server:
         print(">>> Inference server is ready ... ")
         uvicorn.run(self.app, host=host, port=port)
         print(">>> Inference server stops ... ")
-        retur
+        return
 
 
 if __name__ == '__main__':
