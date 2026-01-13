@@ -360,14 +360,13 @@ class Server:
     def __init__(self, args: argparse.Namespace) -> None:
         self.model_, self.noise_shape_, self.data_ = run_inference(args, 1, 0)
         self.args_ = args
-        self.dataset_name = self.data_.dataset_configs['test']['params'][
-            'dataset_name']
+        self.dataset_name = self.data_.dataset_configs['test']['params']['dataset_name']
         self.device_ = get_device_from_parameters(self.model_)
 
     def normalize_image(self, image: torch.Tensor) -> torch.Tensor:
         return (image / 255 - 0.5) * 2
 
-def predict_action(self, payload: Dict[str, Any]) -> Any:
+    def predict_action(self, payload: Dict[str, Any]) -> Any:
         try:
             images = payload['observation.images.top']
             states = payload['observation.state']
@@ -387,7 +386,6 @@ def predict_action(self, payload: Dict[str, Any]) -> Any:
             # -------------------------------------------------------------------
             states = self.data_.test_datasets[self.dataset_name].normalizer(
                 {'observation.state': states})['observation.state']
-
             states, _ = self.data_.test_datasets[
                 self.dataset_name]._map_to_uni_state(states, "joint position")
             print(f"states shape: {states.shape} ...")
@@ -398,10 +396,10 @@ def predict_action(self, payload: Dict[str, Any]) -> Any:
                 actions = actions.t().contiguous()
             # ---------------------------------------------------
             actions, action_mask = self.data_.test_datasets[
-                self.dataset_name]._map_to_uni_action(actions,
-                                                      "joint position")
+                self.dataset_name]._map_to_uni_action(actions, "joint position")
             print(f"actions shape: {actions.shape} ...")
             print("=" * 20)
+
             states = states.unsqueeze(0).cuda()
             actions = actions.unsqueeze(0).cuda()
 
@@ -430,8 +428,7 @@ def predict_action(self, payload: Dict[str, Any]) -> Any:
 
             pred_action = pred_action[..., action_mask[0] == 1.0][0].cpu()
             pred_action = self.data_.test_datasets[
-                self.dataset_name].unnormalizer({'action':
-                                                 pred_action})['action']
+                self.dataset_name].unnormalizer({'action': pred_action})['action']
 
             os.makedirs(args.savedir, exist_ok=True)
             current_time = datetime.now().strftime("%H:%M:%S")
@@ -447,11 +444,6 @@ def predict_action(self, payload: Dict[str, Any]) -> Any:
 
         except:
             logging.error(traceback.format_exc())
-            logging.warning(
-                "Your request threw an error; make sure your request complies with the expected format:\n"
-                "{'image': np.ndarray, 'instruction': str}\n"
-                "You can optionally an `unnorm_key: str` to specific the dataset statistics you want to use for "
-                "de-normalizing the output actions.")
             return {'result': 'error', 'desc': traceback.format_exc()}
 
     def run(self, host: str | None = None, port: int | None = None) -> None:
