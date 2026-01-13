@@ -356,7 +356,6 @@ def get_parser() -> argparse.ArgumentParser:
 
 
 class Server:
-
     def __init__(self, args: argparse.Namespace) -> None:
         self.model_, self.noise_shape_, self.data_ = run_inference(args, 1, 0)
         self.args_ = args
@@ -366,6 +365,36 @@ class Server:
     def normalize_image(self, image: torch.Tensor) -> torch.Tensor:
         return (image / 255 - 0.5) * 2
 
+    def _force_TD(self, x: torch.Tensor, cand_dims=(7, 14)) -> torch.Tensor:
+        """
+        Force tensor to shape (T, D) where D in cand_dims.
+        Accepts x in many possible layouts: (D,T), (1,T,D), (1,D,T), (T,D), (D,), etc.
+        """
+        # reduce to 2D
+        if x.ndim >= 3:
+            if x.shape[0] == 1:
+                x = x[0]
+            else:
+                x = x.reshape(-1, x.shape[-1])
+
+        if x.ndim == 1:
+            x = x.unsqueeze(0)
+
+        if x.ndim != 2:
+            x = x.reshape(-1, x.shape[-1])
+
+        # transpose if needed: (D,T) -> (T,D)
+        if x.shape[-1] not in cand_dims and x.shape[0] in cand_dims:
+            x = x.t().contiguous()
+
+        # last resort: reshape by divisibility
+        if x.shape[-1] not in cand_dims:
+            for d in cand_dims:
+                if x.numel() % d == 0:
+                    x = x.reshape(-1, d).contiguous()
+                    break
+        return x
+
     def predict_action(self, payload: Dict[str, Any]) -> Any:
         try:
             images = payload['observation.images.top']
@@ -374,31 +403,27 @@ class Server:
             language_instruction = payload['language_instruction']
 
             images = torch.tensor(images).cuda()
-            images = self.data_.test_datasets[
-                self.dataset_name].spatial_transform(images).unsqueeze(0)
+            images = self.data_.test_datasets[self.dataset_name].spatial_transform(images).unsqueeze(0)
             images = self.normalize_image(images)
             print(f"images shape: {images.shape} ...")
 
+            # ===================== ONLY CHANGE START: states/actions shape fix =====================
             states = torch.tensor(states)
-            # ---- FIX: normalizer expects (T, D), but client may send (D, T) ----
-            if states.ndim == 2 and states.shape[0] in (6, 7, 14) and states.shape[1] != states.shape[0]:
-                states = states.t().contiguous()
-            # -------------------------------------------------------------------
+            states = self._force_TD(states, cand_dims=(7, 14))  # (T,D) with D=7 or 14
             states = self.data_.test_datasets[self.dataset_name].normalizer(
-                {'observation.state': states})['observation.state']
-            states, _ = self.data_.test_datasets[
-                self.dataset_name]._map_to_uni_state(states, "joint position")
+                {'observation.state': states}
+            )['observation.state']
+            states, _ = self.data_.test_datasets[self.dataset_name]._map_to_uni_state(states, "joint position")
             print(f"states shape: {states.shape} ...")
 
             actions = torch.tensor(actions)
-            # ---- FIX: _map_to_uni_action expects (T, D) too ----
-            if actions.ndim == 2 and actions.shape[0] in (6, 7, 14) and actions.shape[1] != actions.shape[0]:
-                actions = actions.t().contiguous()
-            # ---------------------------------------------------
-            actions, action_mask = self.data_.test_datasets[
-                self.dataset_name]._map_to_uni_action(actions, "joint position")
+            actions = self._force_TD(actions, cand_dims=(7, 14))  # (T,D) with D=7 or 14
+            actions, action_mask = self.data_.test_datasets[self.dataset_name]._map_to_uni_action(
+                actions, "joint position"
+            )
             print(f"actions shape: {actions.shape} ...")
             print("=" * 20)
+            # ===================== ONLY CHANGE END ===============================================
 
             states = states.unsqueeze(0).cuda()
             actions = actions.unsqueeze(0).cuda()
@@ -408,10 +433,7 @@ class Server:
                 'observation.state': states,
                 'action': actions
             }
-            observation = {
-                key: observation[key].to(self.device_, non_blocking=True)
-                for key in observation
-            }
+            observation = {k: observation[k].to(self.device_, non_blocking=True) for k in observation}
 
             args = self.args_
             pred_videos, pred_action, _ = image_guided_synthesis(
@@ -424,11 +446,13 @@ class Server:
                 unconditional_guidance_scale=args.unconditional_guidance_scale,
                 fs=30 / args.frame_stride,
                 timestep_spacing=args.timestep_spacing,
-                guidance_rescale=args.guidance_rescale)
+                guidance_rescale=args.guidance_rescale
+            )
 
             pred_action = pred_action[..., action_mask[0] == 1.0][0].cpu()
-            pred_action = self.data_.test_datasets[
-                self.dataset_name].unnormalizer({'action': pred_action})['action']
+            pred_action = self.data_.test_datasets[self.dataset_name].unnormalizer(
+                {'action': pred_action}
+            )['action']
 
             os.makedirs(args.savedir, exist_ok=True)
             current_time = datetime.now().strftime("%H:%M:%S")
@@ -447,7 +471,6 @@ class Server:
             return {'result': 'error', 'desc': traceback.format_exc()}
 
     def run(self, host: str | None = None, port: int | None = None) -> None:
-        # allow remote bind via env
         if host is None:
             host = os.environ.get("UNIFOLM_SERVER_HOST", "127.0.0.1")
         if port is None:
