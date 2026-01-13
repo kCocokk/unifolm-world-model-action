@@ -4,7 +4,8 @@ config=/data6/user24215463/unifolm-world-model-action/configs/inference/world_mo
 seed=123
 res_dir="/tmp/unifolm_server"
 datasets=(
-    "unitree_g1_pack_camera"
+    # "unitree_g1_pack_camera"
+    "unitree_z1_stackbox"
 )
 
 # bind for SSH tunnel
@@ -23,7 +24,7 @@ print("data_dir ->", cfg.data.params.test.params.data_dir)
 PY
 
 for dataset in "${datasets[@]}"; do
-    CUDA_VISIBLE_DEVICES=0 python3 -u /data6/user24215463/unifolm-world-model-action/scripts/evaluation/real_eval_server.py \
+    CUDA_VISIBLE_DEVICES=1 python3 -u /data6/user24215463/unifolm-world-model-action/scripts/evaluation/real_eval_server.py \
     --seed ${seed} \
     --ckpt_path $ckpt \
     --config $runtime_config \

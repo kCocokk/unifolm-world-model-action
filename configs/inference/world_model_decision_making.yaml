@@ -237,4 +237,5 @@ data:
         max_action_dim: ${model.params.agent_action_dim}
         max_state_dim: ${model.params.agent_state_dim}
     dataset_and_weights: 
-      unitree_g1_pack_camera: 1.0
+      # unitree_g1_pack_camera: 1.0
+      unitree_z1_stackbox: 1.0
