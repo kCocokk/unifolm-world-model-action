@@ -368,7 +368,7 @@ class Server:
     def normalize_image(self, image: torch.Tensor) -> torch.Tensor:
         return (image / 255 - 0.5) * 2
 
-        def predict_action(self, payload: Dict[str, Any]) -> Any:
+    def predict_action(self, payload: Dict[str, Any]) -> Any:
         try:
             images = payload["observation.images.top"]
             states = payload["observation.state"]
@@ -384,42 +384,22 @@ class Server:
             images = self.normalize_image(images)
             print(f"images shape: {images.shape} ...")
 
-            # -------------------- ONLY FIX HERE --------------------
-            # For D1/Z1, normalizer expects (D, T) but client may send (T, D).
-            # We detect and transpose when needed.
             states = torch.tensor(states)
-
-            # infer D from dataset_name (g1=14, z1/d1=7). If unsure, fallback to 7.
-            ds = str(self.dataset_name).lower()
-            expected_d = 14 if "g1" in ds else 7
-
-            if states.ndim == 2:
-                # states: (T, D) -> (D, T)
-                if states.shape[1] == expected_d and states.shape[0] != expected_d:
-                    states = states.transpose(0, 1).contiguous()
-                # already (D, T) keep
-            print(f"states(before norm) shape: {states.shape} ...")
-
-            states = self.data_.test_datasets[self.dataset_name].normalizer(
-                {"observation.state": states}
-            )["observation.state"]
+            states = (
+                self.data_.test_datasets[self.dataset_name]
+                .normalizer({"observation.state": states})["observation.state"]
+            )
             states, _ = self.data_.test_datasets[self.dataset_name]._map_to_uni_state(
                 states, "joint position"
             )
-            print(f"states(after map) shape: {states.shape} ...")
+            print(f"states shape: {states.shape} ...")
 
             actions = torch.tensor(actions)
-            if actions.ndim == 2:
-                if actions.shape[1] == expected_d and actions.shape[0] != expected_d:
-                    actions = actions.transpose(0, 1).contiguous()
-            print(f"actions(before map) shape: {actions.shape} ...")
-
             actions, action_mask = self.data_.test_datasets[self.dataset_name]._map_to_uni_action(
                 actions, "joint position"
             )
-            print(f"actions(after map) shape: {actions.shape} ...")
+            print(f"actions shape: {actions.shape} ...")
             print("=" * 20)
-            # -------------------------------------------------------
 
             states = states.unsqueeze(0).cuda()
             actions = actions.unsqueeze(0).cuda()
@@ -435,6 +415,7 @@ class Server:
             }
 
             args = self.args_
+
             pred_videos, pred_action, _ = image_guided_synthesis(
                 self.model_,
                 language_instruction,
@@ -461,10 +442,15 @@ class Server:
             response = {"result": "ok", "action": pred_action.tolist(), "desc": "success"}
             return JSONResponse(response)
 
-        except:
+        except Exception:
             logging.error(traceback.format_exc())
+            logging.warning(
+                "Your request threw an error; make sure your request complies with the expected format:\n"
+                "{'image': np.ndarray, 'instruction': str}\n"
+                "You can optionally an unnorm_key: str to specific the dataset statistics you want to use for "
+                "de-normalizing the output actions."
+            )
             return {"result": "error", "desc": traceback.format_exc()}
-
 
     def run(self, host: str | None = None, port: int | None = None) -> None:
         # allow remote bind via env
