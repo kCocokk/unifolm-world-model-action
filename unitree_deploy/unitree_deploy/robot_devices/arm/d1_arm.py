@@ -2,11 +2,11 @@ import json
 import socket
 import threading
 import time
-from typing import Optional
+from typing import Optional, Union, List
 
 import numpy as np
 
-from unitree_deploy.robot_devices.arm.configs import D1ArmConfig, MotorParams  # type: ignore
+from unitree_deploy.robot_devices.arm.configs import D1ArmConfig  # type: ignore
 from unitree_deploy.robot_devices.robots_devices_utils import (
     RobotDeviceAlreadyConnectedError,
     RobotDeviceNotConnectedError,
@@ -19,11 +19,11 @@ class D1_ArmController:
     """D1 机械臂控制封装（通过本地 TCP bridge，与 C++ D1 DDS 程序通信）。
 
     约定（与 d1_bridge.cpp 配套）：
-      - bridge 程序监听 {bridge_host}:{bridge_port}（默认 127.0.0.1:5556）。
+      - bridge 程序监听 {bridge_host}:{bridge_port}（默认 127.0.0.1:5555）。
       - Python 通过简单文本协议与 bridge 通信：
           - 发送控制：  CMD <json>\n
           - 请求关节角：GET_Q\n
-          - 返回关节角：Q <servo0_deg> ... <servo6_deg>\n
+          - 返回关节角：Q <servo0_deg> ... <servo5_deg> <gripper_mm>\n
 
     关键设计（对齐 z1/g1）：
       - write_arm(...) 只更新目标（线程安全），后台控制线程以 control_dt 周期下发指令。
@@ -32,10 +32,19 @@ class D1_ArmController:
     """
 
     def __init__(self, config: Optional[D1ArmConfig] = None):
-        # 允许用户直接 D1_ArmController() 做最小测试；
-        # 正常在 robot_client 中会由 draccus/yaml 构造完整 config 并传入。
         if config is None:
-            config = D1ArmConfig(motors={f"joint{i}": MotorParams(motor_id=i) for i in range(7)})
+            # Standalone instantiation fallback (e.g., quick local test)
+            config = D1ArmConfig(motors={
+                "J0": (0, "d1-joint"),
+                "J1": (1, "d1-joint"),
+                "J2": (2, "d1-joint"),
+                "J3": (3, "d1-joint"),
+                "J4": (4, "d1-joint"),
+                "J5": (5, "d1-joint"),
+                "J6": (6, "d1-joint"),
+            })
+        # used by some deployment scripts; harmless if unused
+        self.auto_power_enable_flag = True
         self.config = config
 
         # motors: { name: (index, "d1-joint") }
@@ -43,11 +52,9 @@ class D1_ArmController:
         self._motor_names = list(self.motors.keys())
         self._num_joints = len(self._motor_names)  # 预期 7（6 关节 + 1 夹爪）
 
-        # 关节范围（单位：弧度）
-        # D1 文档：J0 ±135°, J1 ±90°, J2 ±90°, J3 ±135°, J4 ±90°, J5 ±135°。
-        # 第 7 维（夹爪/第 6 轴后级）各固件版本定义不一，这里给一个较宽的默认范围。
-        joint_deg_min = np.array([-135, -90, -90, -135, -90, -135, -90], dtype=np.float32)
-        joint_deg_max = np.array([+135, +90, +90, +135, +90, +135, +90], dtype=np.float32)
+        # 关节范围（前 6 关节，单位：弧度）
+        joint_deg_min = np.array([-135, -90, -90, -135, -90, -135], dtype=np.float32)
+        joint_deg_max = np.array([+135, +90, +90, +135, +90, +135], dtype=np.float32)
         safe_scale = float(getattr(config, "safe_range_scale", 1.0))
         safe_scale = float(np.clip(safe_scale, 0.1, 1.0))
         center = (joint_deg_min + joint_deg_max) / 2.0
@@ -55,9 +62,13 @@ class D1_ArmController:
         self.joint_rad_min = np.deg2rad(center - half)
         self.joint_rad_max = np.deg2rad(center + half)
 
-        # TCP 连接（默认 127.0.0.1:5556，与你的 d1_bridge_slave 一致）
+        # 夹爪范围（mm）
+        self.gripper_min_mm = float(getattr(config, "gripper_min_mm", 0.0))
+        self.gripper_max_mm = float(getattr(config, "gripper_max_mm", 65.0))
+
+        # TCP 连接（默认 127.0.0.1:5555）
         self.bridge_host = getattr(config, "bridge_host", "127.0.0.1")
-        self.bridge_port = int(getattr(config, "bridge_port", 5556))
+        self.bridge_port = int(getattr(config, "bridge_port", 5555))
 
         self.sock: Optional[socket.socket] = None
         self.f: Optional[object] = None  # file-like，用于 readline / write
@@ -75,11 +86,7 @@ class D1_ArmController:
         # 控制线程
         self.control_dt = float(getattr(config, "control_dt", 0.1))
         self.max_pos_speed = float(getattr(config, "max_pos_speed", 180 * (np.pi / 180) * 2))
-        # 第 7 维也按“关节角”处理：弧度/秒。
-        self.max_gripper_speed = float(getattr(config, "max_gripper_speed", self.max_pos_speed))
-
-        # 只在 connect() 成功后置 True，避免外部逻辑多次触发导致异常。
-        self.auto_power_enable_flag = False
+        self.max_gripper_speed = float(getattr(config, "max_gripper_speed", 2.0))  # norm/s
         self._stop_event = threading.Event()
         self._ctrl_thread: Optional[threading.Thread] = None
         self._fb_thread: Optional[threading.Thread] = None
@@ -89,7 +96,7 @@ class D1_ArmController:
         self._last_waypoint_time: Optional[float] = None
         self._last_cmd_time_monotonic: float = 0.0
 
-        # 目标：内部统一为 **弧度**（7 维全是关节角 rad）
+        # 目标（内部统一为：前6关节=rad；夹爪=norm[-1,1]）
         init_pose = np.array(config.init_pose, dtype=np.float32) if config.init_pose is not None else np.zeros(self._num_joints, dtype=np.float32)
         if init_pose.shape[0] != self._num_joints:
             init_pose = np.zeros(self._num_joints, dtype=np.float32)
@@ -102,9 +109,6 @@ class D1_ArmController:
         # “停止运动”标志：保持当前位置/最后安全姿态
         self._stop_motion = False
         self._stop_pose = init_pose.copy()
-
-        # 兼容：某些脚本/日志会访问该 flag
-        self.auto_power_enable_flag: bool = False
 
         # 反馈缓存（尽量提供给 capture_observation 使用）
         self._last_q_measured = init_pose.copy()
@@ -167,8 +171,20 @@ class D1_ArmController:
         q = np.asarray(q, dtype=np.float32).copy()
         if q.shape[0] != self._num_joints:
             raise ValueError(f"q dim error, expect {self._num_joints}, got {q.shape[0]}")
-        q = np.clip(q, self.joint_rad_min, self.joint_rad_max)
+        q[:6] = np.clip(q[:6], self.joint_rad_min, self.joint_rad_max)
+        q[6] = float(np.clip(q[6], -1.0, 1.0))
         return q
+
+    def _gripper_norm_to_mm(self, gripper_norm: float) -> float:
+        gripper_norm = float(np.clip(gripper_norm, -1.0, 1.0))
+        return (gripper_norm + 1.0) / 2.0 * (self.gripper_max_mm - self.gripper_min_mm) + self.gripper_min_mm
+
+    def _gripper_mm_to_norm(self, gripper_mm: float) -> float:
+        gripper_mm = float(np.clip(gripper_mm, self.gripper_min_mm, self.gripper_max_mm))
+        if self.gripper_max_mm <= self.gripper_min_mm + 1e-6:
+            return 0.0
+        norm = (gripper_mm - self.gripper_min_mm) / (self.gripper_max_mm - self.gripper_min_mm) * 2.0 - 1.0
+        return float(np.clip(norm, -1.0, 1.0))
 
     # ========================= 电机供电 / 使能 / 归零 =========================
 
@@ -190,22 +206,7 @@ class D1_ArmController:
         self.set_all_damping_raw(int(stiffness * 80000))
 
     def enable_all(self):
-        """完全使能（高保持）。
-
-        D1 的固件/SDK版本可能对“使能”与“阻尼(保持)”解释不同；
-        为了尽可能把机械臂从“卸力”状态拉起来，这里同时：
-          1) 对每个关节发送 funcode=4 enable=1
-          2) 发送 funcode=5 mode=80000（高保持）
-        """
-        # per-joint enable
-        for jid in range(7):
-            try:
-                self.set_joint_enable(jid, True)
-                time.sleep(0.02)
-            except Exception:
-                pass
-
-        # high stiffness hold
+        """完全使能（高保持）"""
         self.set_all_damping_raw(80000)
 
     def disable_all(self):
@@ -321,39 +322,37 @@ class D1_ArmController:
         if len(parts) != 1 + self._num_joints:
             raise RuntimeError(f"GET_Q reply length mismatch: {line}")
 
-        # d1_bridge_slave 直接把 PubServoInfo 的 servo*_data_ 作为角度(°)透传回来。
-        # 这里统一按 **degree->radian** 做转换，不再把最后一维当作 mm 或归一化值。
-        vals = np.asarray([float(x) for x in parts[1:]], dtype=np.float32)
-        q_rad = np.deg2rad(vals)
-        return self._clip_q(q_rad)
+        vals = [float(x) for x in parts[1:]]
+        joint_deg = np.asarray(vals[:6], dtype=np.float32)
+        gripper_mm = float(vals[6])
+
+        joint_rad = np.deg2rad(joint_deg)
+        gripper_norm = self._gripper_mm_to_norm(gripper_mm)
+        q = np.concatenate([joint_rad, np.array([gripper_norm], dtype=np.float32)], axis=0)
+        return self._clip_q(q)
 
     def read_current_motor_q(self) -> np.ndarray:
         return self.read_current_arm_q()
 
     def read_current_arm_q(self) -> np.ndarray:
-        """尽量返回缓存的真实反馈（rad）。若缓存尚未更新，则尝试现场 GET_Q。"""
-        if not self.is_connected:
-            raise RobotDeviceNotConnectedError()
+        """Return current joint positions in the convention used by the policy/client.
 
-        with self.ctrl_lock:
-            q = self._last_q_measured.copy()
-            ts = self._last_q_measured_ts
+        - J0~J5: radians
+        - J6 (gripper): normalized in [-1, 1] (mapped to 0~65mm by _gripper_norm_to_mm)
+        """
+        self._assert_connected()
+        joint_deg, gripper_mm = self._recv_state_deg_mm(timeout_s=0.5)
 
-        # 缓存新鲜则直接返回
-        if ts > 0 and (time.monotonic() - ts) < max(0.5, 5 * self.control_dt):
-            return q
+        joint_rad = np.deg2rad(np.asarray(joint_deg, dtype=np.float32))
+        gripper_norm = self._gripper_mm_to_norm(float(gripper_mm))
+        q = np.concatenate([joint_rad, np.asarray([gripper_norm], dtype=np.float32)], axis=0)
 
-        # 否则尝试主动拉一次
-        try:
-            q2 = self._read_q_from_bridge(timeout=1.0)
-            with self.ctrl_lock:
-                self._last_q_measured = q2.copy()
-                self._last_q_measured_ts = time.monotonic()
-            return q2
-        except Exception as e:
-            log_warning(f"[D1_ArmController] read_current_arm_q fallback to cached, err={e}")
-            return q
+        norm = np.asarray(self.config.motor_qpos_normalization_offsets, dtype=np.float32)
+        if norm.shape[0] == q.shape[0]:
+            q = q + norm
 
+        self._last_q = q
+        return q
     def read_current_arm_dq(self) -> np.ndarray:
         """bridge 没有速度信息，这里简单返回 0。"""
         if not self.is_connected:
@@ -380,45 +379,47 @@ class D1_ArmController:
         with self.ctrl_lock:
             self._stop_motion = False
 
-    def write_arm(
-        self,
-        q_target: list[float] | np.ndarray,
-        tauff_target: list[float] | np.ndarray = None,
-        time_target: float | None = None,
-        cmd_target: str | None = None,
-    ):
-        """设置控制目标（线程安全，后台线程按 control_dt 下发）。"""
-        if not self.is_connected:
-            raise RobotDeviceNotConnectedError()
+    def write_arm(self, q_cmd: Union[np.ndarray, List[float]], smooth_mode: Optional[int] = None) -> None:
+        """Send a 7D command.
 
-        q_target = np.asarray(q_target, dtype=np.float32).reshape(-1)
-        if q_target.shape[0] != self._num_joints:
-            raise ValueError(f"[D1_ArmController] q_target dim error, expect {self._num_joints}, got {q_target.shape[0]}")
-        q_target = self._clip_q(q_target)
+        Input convention:
+        - J0~J5: radians
+        - J6: gripper normalized in [-1, 1]
 
-        if tauff_target is None:
-            tauff = np.zeros_like(q_target, dtype=np.float32)
-        else:
-            tauff = np.asarray(tauff_target, dtype=np.float32).reshape(-1)
-            if tauff.shape[0] != self._num_joints:
-                tauff = np.zeros_like(q_target, dtype=np.float32)
+        Bridge / firmware convention:
+        - angle0~5: degrees
+        - angle6: gripper in mm (0~65)
+        """
+        self._assert_connected()
 
-        with self.ctrl_lock:
-            # 新指令到来时，解除 stop（由外部明确 stop_motion 才会进入 stop 状态）
-            self._stop_motion = False
+        if smooth_mode is None:
+            smooth_mode = self.ctrl_smooth_mode
 
-            self._arm_q_target = q_target
-            self._arm_tauff_target = tauff
-            self._arm_time_target = time_target
-            self._arm_cmd_target = cmd_target
-            self._last_cmd_time_monotonic = time.monotonic()
+        q_cmd = np.asarray(q_cmd, dtype=np.float32).reshape(-1)
+        if q_cmd.shape[0] != 7:
+            raise ValueError(f"D1 expects 7D action, got {q_cmd.shape}")
 
-    # ========================= 内部：下发与线程循环 =========================
+        norm = np.asarray(self.config.motor_qpos_normalization_offsets, dtype=np.float32)
+        if norm.shape[0] == 7:
+            q_cmd = q_cmd - norm
 
+        q_cmd = self._clip_q(q_cmd)
+
+        joint_deg = np.rad2deg(q_cmd[:6]).astype(np.float32)
+        gripper_mm = self._gripper_norm_to_mm(float(q_cmd[6]))
+
+        data = {"mode": int(smooth_mode)}
+        for i in range(6):
+            data[f"angle{i}"] = float(joint_deg[i])
+        data["angle6"] = float(gripper_mm)
+
+        cmd = {"seq": self._next_seq(), "address": 1, "funcode": 2, "data": data}
+        self._send_json(cmd)
     def _send_q_cmd(self, q: np.ndarray):
-        """将 q（rad）转换为 D1 角度（deg）并下发。"""
+        """将 q（rad+norm）转换为 D1 角度/夹爪行程并下发。"""
         q = self._clip_q(q)
-        joint_deg = np.rad2deg(q).astype(np.float32)
+        joint_deg = np.rad2deg(q[:6]).astype(np.float32)
+        gripper_mm = float(self._gripper_norm_to_mm(float(q[6])))
 
         data = {
             "mode": 1,  # 轨迹大平滑
@@ -428,7 +429,7 @@ class D1_ArmController:
             "angle3": float(joint_deg[3]),
             "angle4": float(joint_deg[4]),
             "angle5": float(joint_deg[5]),
-            "angle6": float(joint_deg[6]),
+            "angle6": float(gripper_mm),
         }
 
         with self.io_lock:
