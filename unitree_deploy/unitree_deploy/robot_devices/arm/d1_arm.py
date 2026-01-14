@@ -318,12 +318,7 @@ class D1_ArmController:
         #   4) 用一个很小的“单关节”nudging 来判断是否真的从卸力变为可控
         try:
             if self.auto_power_enable_flag:
-                ok = self.auto_power_enable(retries=5)
-                if not ok:
-                    log_warning(
-                        "[D1_ArmController] Auto Power+Enable finished but arm still seems limp. "
-                        "Please check: (1) robot power supply (24V), (2) E-Stop, (3) DDS topic routing/interface binding."
-                    )
+                self.auto_power_enable(max_tries=5)
         except Exception as e:
             log_warning(f"[D1_ArmController] Auto Power+Enable crashed (can retry later): {e}")
 
