@@ -31,8 +31,13 @@ class D1_ArmController:
       - 安全策略：不做“自动卸力”；发现异常则“停止运动=保持当前位置/最后安全目标”。
     """
 
-    def __init__(self, config: D1ArmConfig):
+    def __init__(self, config: Optional[D1ArmConfig] = None):
+        if config is None:
+            config = D1ArmConfig()
         self.config = config
+        # whether to auto power + enable at connect()
+        self.auto_power_enable_flag = bool(getattr(config, 'auto_power_enable', True))
+        self._auto_power_enable_done = False
 
         # motors: { name: (index, "d1-joint") }
         self.motors = config.motors
@@ -225,46 +230,37 @@ class D1_ArmController:
             return False
         return False
 
-    def auto_power_enable(self, max_tries: int = 5, sleep_s: float = 0.2) -> None:
-        """更鲁棒的上电+使能：尝试两种固件语义，并用轻微运动验证。"""
-        last_err = None
-        for i in range(max_tries):
-            try:
-                log_info(f"[D1_ArmController] Auto Power+Enable (try {i+1}/{max_tries})")
-                # 1) 上电
-                self.set_power(True)
-                time.sleep(sleep_s)
+def auto_power_enable(self, max_tries: int = 5, sleep_s: float = 0.25):
+    """Auto power on + lock (enable) all joints.
 
-                # 2) 方案 A：mode=1 使能（常见固件） + 单关节使能兜底
-                self.set_all_enable_mode01(True)
-                time.sleep(sleep_s)
-                for jid in range(7):
-                    self.enable_joint(jid, True)
-                time.sleep(sleep_s)
+    Notes:
+    - D1 command protocol uses:
+      - funcode=6 power: 0/1
+      - funcode=5 damping: range 0~80000 (0=free, 80000=stiff/locked)
+    """
+    if not getattr(self, "auto_power_enable_flag", True):
+        return
+    if getattr(self, "_auto_power_enable_done", False):
+        return
 
-                if self._try_nudge_and_observe():
-                    log_success("🚀 [D1_ArmController] Auto Power+Enable DONE (mode=0/1)")
-                    return
+    for i in range(max_tries):
+        try:
+            # 1) Power on motors
+            self.set_power(True)
+            time.sleep(sleep_s)
 
-                # 3) 方案 B：mode=80000 高阻尼（另一类固件/文档写法）
-                self.set_all_damping_raw(80000)
-                time.sleep(sleep_s)
-                for jid in range(7):
-                    self.enable_joint(jid, True)
-                time.sleep(sleep_s)
+            # 2) Enable/lock all joints (use raw damping per vendor doc)
+            raw = int(getattr(self.config, "enable_damping_raw", 80000))
+            self.set_all_damping_raw(raw)
+            time.sleep(sleep_s)
 
-                if self._try_nudge_and_observe():
-                    log_success("🚀 [D1_ArmController] Auto Power+Enable DONE (damping=80000)")
-                    return
+            self._auto_power_enable_done = True
+            return
+        except Exception as e:
+            logging.warning(f"[D1_ArmController] Auto Power+Enable failed (try {i+1}/{max_tries}): {e}")
+            time.sleep(sleep_s)
 
-                last_err = RuntimeError("Enable sequence sent but arm still appears limp (no motion observed)")
-            except Exception as e:
-                last_err = e
-                time.sleep(0.2)
-
-        # 最终失败：抛出，方便上层看到明确原因
-        if last_err is not None:
-            raise last_err
+    raise RuntimeError("Auto Power+Enable failed after retries.")
 
     def set_all_damping(self, stiffness: float):
         """stiffness ∈ [0,1] 映射到 mode ∈ [0,80000]"""
