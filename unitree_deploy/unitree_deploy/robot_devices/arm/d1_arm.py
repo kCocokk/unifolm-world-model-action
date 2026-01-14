@@ -1,4 +1,5 @@
 import json
+import os
 import socket
 import threading
 import time
@@ -19,7 +20,7 @@ class D1_ArmController:
     """D1 机械臂控制封装（通过本地 TCP bridge，与 C++ D1 DDS 程序通信）。
 
     约定（与 d1_bridge.cpp 配套）：
-      - bridge 程序监听 {bridge_host}:{bridge_port}（默认 127.0.0.1:5555）。
+      - bridge 程序监听 {bridge_host}:{bridge_port}（默认 127.0.0.1:5555 或 5556）。
       - Python 通过简单文本协议与 bridge 通信：
           - 发送控制：  CMD <json>\n
           - 请求关节角：GET_Q\n
@@ -29,6 +30,13 @@ class D1_ArmController:
       - write_arm(...) 只更新目标（线程安全），后台控制线程以 control_dt 周期下发指令。
       - cmd_target 支持 "schedule_waypoint" / "drive_to_waypoint"。
       - 安全策略：不做“自动卸力”；发现异常则“停止运动=保持当前位置/最后安全目标”。
+
+    本文件额外增强：
+      - connect() 时自动上电 + 自动使能（可配置重试次数/间隔）
+      - 第一次发送动作前也会 ensure（防止上电/使能未生效）
+      - 支持环境变量覆盖 bridge 地址与端口：
+            D1_BRIDGE_HOST, D1_BRIDGE_PORT
+            UNIFOLM_D1_BRIDGE_HOST, UNIFOLM_D1_BRIDGE_PORT
     """
 
     def __init__(self, config: D1ArmConfig):
@@ -54,8 +62,28 @@ class D1_ArmController:
         self.gripper_max_mm = float(getattr(config, "gripper_max_mm", 65.0))
 
         # TCP 连接（默认 127.0.0.1:5555）
-        self.bridge_host = getattr(config, "bridge_host", "127.0.0.1")
-        self.bridge_port = int(getattr(config, "bridge_port", 5555))
+        # 允许通过环境变量覆盖（你现在 slave bridge 在 5556，这里必须能对上）
+        env_host = (
+            os.environ.get("UNIFOLM_D1_BRIDGE_HOST")
+            or os.environ.get("D1_BRIDGE_HOST")
+            or None
+        )
+        env_port = (
+            os.environ.get("UNIFOLM_D1_BRIDGE_PORT")
+            or os.environ.get("D1_BRIDGE_PORT")
+            or None
+        )
+
+        self.bridge_host = env_host if env_host is not None else getattr(config, "bridge_host", "127.0.0.1")
+        self.bridge_port = int(env_port) if env_port is not None else int(getattr(config, "bridge_port", 5555))
+
+        # 自动上电/使能参数（可选由 config 覆盖）
+        self.auto_power_enable = bool(getattr(config, "auto_power_enable", True))
+        self.auto_power_enable_retries = int(getattr(config, "auto_power_enable_retries", 5))
+        self.auto_power_enable_sleep = float(getattr(config, "auto_power_enable_sleep", 0.3))
+        # “使能”力度：兼容两种实现（0/1 或 0~80000）
+        # 默认用 80000（强保持），如果你的固件只接受 0/1，可把 config.enable_mode_raw=1
+        self.enable_mode_raw = int(getattr(config, "enable_mode_raw", 80000))
 
         self.sock: Optional[socket.socket] = None
         self.f: Optional[object] = None  # file-like，用于 readline / write
@@ -84,7 +112,11 @@ class D1_ArmController:
         self._last_cmd_time_monotonic: float = 0.0
 
         # 目标（内部统一为：前6关节=rad；夹爪=norm[-1,1]）
-        init_pose = np.array(config.init_pose, dtype=np.float32) if config.init_pose is not None else np.zeros(self._num_joints, dtype=np.float32)
+        init_pose = (
+            np.array(config.init_pose, dtype=np.float32)
+            if config.init_pose is not None
+            else np.zeros(self._num_joints, dtype=np.float32)
+        )
         if init_pose.shape[0] != self._num_joints:
             init_pose = np.zeros(self._num_joints, dtype=np.float32)
 
@@ -100,6 +132,9 @@ class D1_ArmController:
         # 反馈缓存（尽量提供给 capture_observation 使用）
         self._last_q_measured = init_pose.copy()
         self._last_q_measured_ts = 0.0
+
+        # 自动上电/使能：状态机
+        self._powered_and_enabled = False
 
     # ========================= 一些属性 =========================
 
@@ -182,7 +217,7 @@ class D1_ArmController:
             self._send_json_command(funcode=6, data={"power": power_val})
 
     def set_all_damping_raw(self, mode: int):
-        """funcode=5：mode 0~80000，0 卸力，80000 完全锁死（注意：这里的“锁死”是高阻尼/高保持）。"""
+        """funcode=5：mode 0~80000，0 卸力，80000 完全锁死（高阻尼/高保持）"""
         mode = int(np.clip(mode, 0, 80000))
         with self.io_lock:
             self._send_json_command(funcode=5, data={"mode": mode})
@@ -194,10 +229,11 @@ class D1_ArmController:
 
     def enable_all(self):
         """完全使能（高保持）"""
-        self.set_all_damping_raw(80000)
+        # 兼容：有的固件只接受 0/1；你可以把 enable_mode_raw 设成 1
+        self.set_all_damping_raw(self.enable_mode_raw)
 
     def disable_all(self):
-        """完全卸力（⚠️你不希望自动卸力，这个函数保留给手动调试，不会自动调用）"""
+        """完全卸力（⚠️不会自动调用）"""
         self.set_all_damping_raw(0)
 
     def set_joint_enable(self, joint_id: int, enable: bool, raw_mode: Optional[int] = None):
@@ -216,6 +252,43 @@ class D1_ArmController:
         with self.io_lock:
             self._send_json_command(funcode=7, data={})
 
+    # ========================= 自动上电/使能（新增，关键） =========================
+
+    def _ensure_power_and_enable(self, force: bool = False):
+        """确保 D1 已上电并处于使能状态。
+        - connect() 后会调用一次
+        - 第一次下发动作前也会调用一次（防止上电/使能指令没生效）
+        """
+        if not self.is_connected:
+            raise RobotDeviceNotConnectedError()
+
+        if (not force) and self._powered_and_enabled:
+            return
+
+        if not self.auto_power_enable:
+            return
+
+        last_err: Optional[Exception] = None
+        for i in range(max(1, self.auto_power_enable_retries)):
+            try:
+                log_info(f"[D1_ArmController] Auto Power+Enable (try {i+1}/{self.auto_power_enable_retries})")
+                self.set_power(True)
+                time.sleep(self.auto_power_enable_sleep)
+                self.enable_all()
+                time.sleep(self.auto_power_enable_sleep)
+                # 再补一次 power on（有些控制器上电需要更久，二次确认更稳）
+                self.set_power(True)
+                time.sleep(self.auto_power_enable_sleep)
+
+                self._powered_and_enabled = True
+                log_success("[D1_ArmController] Auto Power+Enable DONE")
+                return
+            except Exception as e:
+                last_err = e
+                time.sleep(self.auto_power_enable_sleep)
+
+        log_warning(f"[D1_ArmController] Auto Power+Enable FAILED, last_err={last_err}")
+
     # ========================= 连接 / 断开 =========================
 
     def connect(self):
@@ -226,16 +299,10 @@ class D1_ArmController:
         self.sock = socket.create_connection((self.bridge_host, self.bridge_port), timeout=5.0)
         self.f = self.sock.makefile("rwb", buffering=0)
         self.is_connected = True
+        self._powered_and_enabled = False
 
-        # 尝试上电 + 使能（允许失败）
-        try:
-            log_info("[D1_ArmController] Power ON")
-            self.set_power(True)
-            time.sleep(0.2)
-            log_info("[D1_ArmController] Enable all joints")
-            self.enable_all()
-        except Exception as e:
-            log_warning(f"[D1_ArmController] 上电/使能失败（可稍后手动重试）: {e}")
+        # 自动上电 + 使能（关键：你要的修改点）
+        self._ensure_power_and_enable(force=True)
 
         # 初始化插值器与目标为当前姿态（优先真实值，否则退化为 init_pose）
         try:
@@ -260,29 +327,28 @@ class D1_ArmController:
         self._fb_thread = threading.Thread(target=self._feedback_poll_loop, daemon=True)
         self._fb_thread.start()
 
-        log_success("[D1_ArmController] Connect OK!")
+        log_success("[D1_ArmController] Connected.")
 
     def disconnect(self):
         if not self.is_connected:
-            raise RobotDeviceNotConnectedError("D1_ArmController not connected.")
+            return
 
-        # 先停线程（不自动卸力）
         self._stop_event.set()
         try:
             if self._ctrl_thread is not None:
-                self._ctrl_thread.join(timeout=2.0)
-        except Exception:
-            pass
-        try:
+                self._ctrl_thread.join(timeout=1.0)
             if self._fb_thread is not None:
-                self._fb_thread.join(timeout=2.0)
+                self._fb_thread.join(timeout=1.0)
         except Exception:
             pass
 
         try:
             with self.io_lock:
                 if self.f is not None:
-                    self.f.close()
+                    try:
+                        self.f.close()
+                    except Exception:
+                        pass
                 if self.sock is not None:
                     self.sock.close()
         except Exception:
@@ -407,9 +473,16 @@ class D1_ArmController:
     # ========================= 内部：下发与线程循环 =========================
 
     def _send_q_cmd(self, q: np.ndarray):
-        """将 q（rad+norm）转换为 D1 角度/夹爪行程并下发。"""
+        """将 q（rad+norm）转换为 D1 角度/夹爪行程并下发。
+
+        注意：D1 文档为角度制（deg），这里明确做 rad->deg 转换（你关心的 rad→deg 在这里）。
+        """
+        # 第一次真正下发动作前，再确保一次上电/使能（防止 connect 后未生效）
+        if not self._powered_and_enabled:
+            self._ensure_power_and_enable(force=False)
+
         q = self._clip_q(q)
-        joint_deg = np.rad2deg(q[:6]).astype(np.float32)
+        joint_deg = np.rad2deg(q[:6]).astype(np.float32)  # <<< rad -> deg
         gripper_mm = float(self._gripper_norm_to_mm(float(q[6])))
 
         data = {
