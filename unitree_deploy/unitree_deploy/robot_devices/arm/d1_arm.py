@@ -363,8 +363,12 @@ class D1_ArmController:
         cmd_target: str | None = None,
     ):
         q = np.asarray(q_target, dtype=np.float32).reshape(-1)
+        # UnifolM dual checkpoints sometimes output higher-dim actions (e.g., 16D).
+        # For D1 we follow Z1GripperArmJointIndex convention: take the first 7 dims.
+        if q.shape[0] > self._num_joints:
+            q = q[: self._num_joints]
         if q.shape[0] != self._num_joints:
-            raise ValueError(f"D1 write_arm expects {self._num_joints} dims, got {q.shape[0]}")
+            raise ValueError(f"D1 write_arm expects >= {self._num_joints} dims (will take first {self._num_joints}), got {q.shape[0]}")
         q = self._clip_q(q)
         with self.ctrl_lock:
             self.q_target = q
