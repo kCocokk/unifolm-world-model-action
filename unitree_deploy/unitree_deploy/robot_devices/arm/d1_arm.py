@@ -127,6 +127,11 @@ class D1_ArmController:
         self.warmup_seconds = float(getattr(config, "warmup_seconds", 1.5))
         self.warmup_seconds = max(0.0, self.warmup_seconds)
 
+
+        # ----- quick amplitude scaling (policy->D1 adaptation) -----
+        # 0.0 = no motion; 1.0 = follow policy fully. Try 0.2~0.5 first.
+        self.policy_scale = float(getattr(config, "policy_scale", 0.30))
+        self.policy_scale = float(np.clip(self.policy_scale, 0.0, 1.0))
         # ----- internal state -----
         init_pose = np.zeros((self._num_joints,), dtype=np.float32)
         if getattr(config, "init_pose", None) is not None:
@@ -511,6 +516,14 @@ class D1_ArmController:
                     with self.ctrl_lock:
                         q_meas = self._last_q_measured.copy()
                     q_des = (1.0 - w) * q_meas + w * q_des
+
+                # -------- amplitude scaling (shrink policy delta) --------
+                # Pull target toward current measured pose to reduce over-large motions.
+                # q_des/q_meas are in rad.
+                if self.policy_scale < 1.0:
+                    with self.ctrl_lock:
+                        q_meas2 = self._last_q_measured.copy()
+                    q_des = q_meas2 + self.policy_scale * (q_des - q_meas2)
 
                 # -------- EMA smoothing (deg) --------
                 cmd_deg = np.rad2deg(q_des).astype(np.float32)
