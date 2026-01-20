@@ -115,18 +115,6 @@ class D1_ArmController:
         self.feedback_dt = float(getattr(config, "feedback_dt", max(self.control_dt, 0.1)))
         self.max_pos_speed = float(getattr(config, "max_pos_speed", 120 * (np.pi / 180)))  # rad/s
 
-        # ----- motion comfort / safety (recommended) -----
-        # Speed limits are enforced *in addition* to interpolator speed limits.
-        # These are in DEG/S because D1 uses degrees on-wire.
-        self.max_joint_speed_deg_s = float(getattr(config, "max_joint_speed_deg_s", 20.0))   # joints 0-5
-        self.max_gripper_speed_deg_s = float(getattr(config, "max_gripper_speed_deg_s", 40.0))  # joint 6
-        # EMA low-pass smoothing on commanded position (deg). 0 disables.
-        self.ema_alpha = float(getattr(config, "ema_alpha", 0.15))
-        self.ema_alpha = float(np.clip(self.ema_alpha, 0.0, 1.0))
-        # Warmup blending time (seconds): blend from measured pose -> policy pose.
-        self.warmup_seconds = float(getattr(config, "warmup_seconds", 1.5))
-        self.warmup_seconds = max(0.0, self.warmup_seconds)
-
         # ----- internal state -----
         init_pose = np.zeros((self._num_joints,), dtype=np.float32)
         if getattr(config, "init_pose", None) is not None:
@@ -150,11 +138,6 @@ class D1_ArmController:
         self._stop_pose = init_pose.copy()
         self._stop_motion = False
 
-
-        # last sent command (deg), for per-step speed limiting + EMA
-        self._last_sent_deg = np.zeros((self._num_joints,), dtype=np.float32)
-        self._ema_deg = None  # type: Optional[np.ndarray]
-        self._warmup_t0 = None  # type: Optional[float]
         # ----- threads -----
         self._stop_event = threading.Event()
         self._ctrl_thread: Optional[threading.Thread] = None
@@ -283,12 +266,6 @@ class D1_ArmController:
             self.q_target = q0.copy()
             self._stop_pose = q0.copy()
             self.pose_interp = JointTrajectoryInterpolator(times=[time.monotonic()], joint_positions=[q0.copy()])
-
-
-        # Initialize smoothing / rate-limit states
-        self._last_sent_deg = np.rad2deg(q0).astype(np.float32)
-        self._ema_deg = self._last_sent_deg.copy()
-        self._warmup_t0 = time.monotonic()
 
         # 2) power + enable (best-effort, send both "1" and "80000" to match doc variants)
         try:
@@ -501,45 +478,9 @@ class D1_ArmController:
                         )
                         last_waypoint_time = self.pose_interp.times[-1]
 
-                q_des = self.pose_interp(t_now)
-                q_des = self._clip_q(q_des)
-
-                # -------- warmup blend (avoid jump on takeover) --------
-                if self.warmup_seconds > 1e-6 and self._warmup_t0 is not None:
-                    w = (t_now - float(self._warmup_t0)) / float(self.warmup_seconds)
-                    w = float(np.clip(w, 0.0, 1.0))
-                    with self.ctrl_lock:
-                        q_meas = self._last_q_measured.copy()
-                    q_des = (1.0 - w) * q_meas + w * q_des
-
-                # -------- EMA smoothing (deg) --------
-                cmd_deg = np.rad2deg(q_des).astype(np.float32)
-                if self.ema_alpha > 0.0:
-                    if self._ema_deg is None:
-                        self._ema_deg = cmd_deg.copy()
-                    else:
-                        self._ema_deg = (1.0 - self.ema_alpha) * self._ema_deg + self.ema_alpha * cmd_deg
-                    cmd_deg = self._ema_deg
-
-                # -------- per-step speed limiting (deg/step) --------
-                max_step = np.full((self._num_joints,), self.max_joint_speed_deg_s * self.control_dt, dtype=np.float32)
-                if self._num_joints >= 7:
-                    max_step[6] = self.max_gripper_speed_deg_s * self.control_dt
-                # clamp to reasonable minimum/maximum to avoid misconfig
-                max_step = np.clip(max_step, 0.1, 30.0).astype(np.float32)
-
-                last_deg = self._last_sent_deg.astype(np.float32)
-                delta = cmd_deg - last_deg
-                delta = np.clip(delta, -max_step, +max_step)
-                send_deg = last_deg + delta
-
-                # enforce joint limits again (deg), then send
-                send_rad = self._clip_q(np.deg2rad(send_deg))
-                self._send_q_cmd(send_rad, smooth_mode=0)
-
-                # update last sent
-                self._last_sent_deg = np.rad2deg(send_rad).astype(np.float32)
-                q_cmd = send_rad
+                q_cmd = self.pose_interp(t_now)
+                q_cmd = self._clip_q(q_cmd)
+                self._send_q_cmd(q_cmd, smooth_mode=0)
 
                 with self.ctrl_lock:
                     self._stop_pose = q_cmd.copy()
