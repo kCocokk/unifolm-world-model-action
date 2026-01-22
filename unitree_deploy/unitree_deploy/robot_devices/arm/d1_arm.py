@@ -291,16 +291,16 @@ class D1_ArmController:
     
     # ========================= mapping: policy(Z1)->D1 =========================
     def _map_z1_to_d1(self, q_policy_7_rad: np.ndarray) -> np.ndarray:
-        \"\"\"Map 7D policy action (Z1 order) -> 7D D1 command (rad).
+        """Map 7D policy action (Z1 order) -> 7D D1 command (rad).
 
         This file version changes ONLY mapping. All other control logic is untouched.
         Defaults:
           - reorder via z1_to_d1_index
           - relative mapping (recommended): D1 follows policy deltas from the first frame.
-        \"\"\"
+        """
         q_policy = np.asarray(q_policy_7_rad, dtype=np.float32).reshape(-1)
         if q_policy.shape[0] != 7:
-            raise ValueError(f\"_map_z1_to_d1 expects 7 dims, got {q_policy.shape[0]}\")
+            raise ValueError(f"_map_z1_to_d1 expects 7 dims, got {q_policy.shape[0]}")
         # reorder into D1 joint order
         q_mapped = np.zeros((7,), dtype=np.float32)
         for d1_i in range(7):
