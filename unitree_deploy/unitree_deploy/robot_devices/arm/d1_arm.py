@@ -46,6 +46,15 @@ class D1_ArmController:
                 }
             )
 
+        # ===== only config params (no logic change) =====
+        setattr(config, "use_relative_mapping", True)
+        setattr(config, "z1_to_d1_index", [0, 1, 2, 3, 4, 5, 6])
+        setattr(config, "d1_delta_gain", [1.0, 0.55, 0.55, 0.75, 1.0, 1.0, 1.0])
+        # 可选：如果你发现某些关节方向反了，再改这里的符号
+        # 先给一个常见的候选（肩/肘可能方向相反），不确定就先全 1
+        setattr(config, "d1_joint_sign", [1, 1, 1, 1, 1, 1, 1])
+        setattr(config, "d1_offset_rad", [0, 0, 0, 0, 0, 0, 0])
+
         self.config = config
 
         # ----- motor meta -----
