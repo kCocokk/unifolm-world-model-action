@@ -127,7 +127,8 @@ class D1_ArmController:
         # ----- motion comfort / safety (recommended) -----
         # Speed limits are enforced *in addition* to interpolator speed limits.
         # These are in DEG/S because D1 uses degrees on-wire.
-        self.max_joint_speed_deg_s = float(getattr(config, "max_joint_speed_deg_s", 20.0))   # joints 0-5
+        # self.max_joint_speed_deg_s = float(getattr(config, "max_joint_speed_deg_s", 20.0))   # joints 0-5
+        self.max_joint_speed_deg_s = float(getattr(config, "max_joint_speed_deg_s", 10.0))   # joints 0-5
         self.max_gripper_speed_deg_s = float(getattr(config, "max_gripper_speed_deg_s", 40.0))  # joint 6
         # EMA low-pass smoothing on commanded position (deg). 0 disables.
         self.ema_alpha = float(getattr(config, "ema_alpha", 0.15))
