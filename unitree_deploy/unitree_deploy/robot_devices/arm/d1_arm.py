@@ -53,7 +53,7 @@ class D1_ArmController:
         # setattr(config, "d1_delta_gain", [1, 1, 1, 1, 1, 1, 1])
         # 可选：如果你发现某些关节方向反了，再改这里的符号
         # 先给一个常见的候选（肩/肘可能方向相反），不确定就先全 1
-        setattr(config, "d1_joint_sign", [1, 1, 1, 1, 1, 1, 1])
+        setattr(config, "d1_joint_sign", [1, 1, -1, 1, 1, 1, 1])
         setattr(config, "d1_offset_rad", [0, 0, 0, 0, 0, 0, 0])
 
         self.config = config
