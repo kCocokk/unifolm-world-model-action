@@ -49,8 +49,8 @@ class D1_ArmController:
         # ===== only config params (no logic change) =====
         setattr(config, "use_relative_mapping", True)
         setattr(config, "z1_to_d1_index", [0, 1, 2, 3, 4, 5, 6])
-        # setattr(config, "d1_delta_gain", [0.65, 0.65, 0.65, 0.65, 0.65, 0.65, 1.00])
-        setattr(config, "d1_delta_gain", [1, 1, 1, 1, 1, 1, 1])
+        setattr(config, "d1_delta_gain", [0.9, 0.65, 0.65, 0.90, 0.65, 0.65, 1.00])
+        # setattr(config, "d1_delta_gain", [1, 1, 1, 1, 1, 1, 1])
         # 可选：如果你发现某些关节方向反了，再改这里的符号
         # 先给一个常见的候选（肩/肘可能方向相反），不确定就先全 1
         setattr(config, "d1_joint_sign", [1, 1, 1, 1, 1, 1, 1])
