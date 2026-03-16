@@ -1,0 +1,186 @@
+model:
+  pretrained_checkpoint: /data6/user24215463/unifolm_checkpoints/Base/unifolm_wma_base.ckpt
+  base_learning_rate: 5.0e-06
+  scale_lr: False
+  target: unifolm_wma.models.ddpms.LatentVisualDiffusion
+  params:
+    rescale_betas_zero_snr: True
+    parameterization: "v"
+    linear_start: 0.00085
+    linear_end: 0.012
+    num_timesteps_cond: 1
+    log_every_t: 200
+    timesteps: 1000
+    first_stage_key: video
+    cond_stage_key: instruction
+    cond_stage_trainable: False
+    image_proj_model_trainable: True
+    conditioning_key: hybrid
+    image_size: [40, 64]
+    channels: 4
+    scale_by_std: False
+    scale_factor: 0.18215
+    use_ema: False
+    uncond_prob: 0.05
+    uncond_type: 'empty_seq'
+    rand_cond_frame: false
+    use_dynamic_rescale: true
+    base_scale: 0.7
+    fps_condition_type: 'fps'
+    perframe_ae: True
+    freeze_embedder: True
+    n_obs_steps_imagen: 2
+    n_obs_steps_acting: 2
+    agent_state_dim: 16
+    agent_action_dim: 16
+    decision_making_only: True
+
+    input_pertub: 0.1
+    lr_scheduler: cosine
+    lr_warmup_steps: 2000
+    num_epochs: 60000
+    gradient_accumulate_every: 1
+    use_scheduler: True
+    dp_use_ema: True
+
+    dp_ema_config:
+      target: unifolm_wma.models.diffusion_head.ema_model.EMAModel
+      params:
+        update_after_step: 0
+        inv_gamma: 1.0
+        power: 0.75
+        min_value: 0.0
+        max_value: 0.9999
+
+    noise_scheduler_config:
+      target: diffusers.DDIMScheduler
+      params:
+        num_train_timesteps: 1000
+        beta_start: 0.0001
+        beta_end: 0.02
+        beta_schedule: squaredcos_cap_v2
+        clip_sample: True
+        set_alpha_to_one: True
+        steps_offset: 0
+        prediction_type: epsilon
+
+    dp_optimizer_config:
+      target: torch.optim.AdamW
+      params:
+        lr: 1.0e-4
+        betas: [0.95, 0.999]
+        eps: 1.0e-8
+        weight_decay: 1.0e-6
+
+    wma_config:
+      target: unifolm_wma.modules.networks.wma_model.WMAModel
+      params:
+        in_channels: 8
+        out_channels: 4
+        model_channels: 320
+        attention_resolutions: [4, 2, 1]
+        num_res_blocks: 2
+        channel_mult: [1, 2, 4, 4]
+        dropout: 0.1
+        num_head_channels: 64
+        transformer_depth: 1
+        context_dim: 1024
+        use_linear: true
+        use_checkpoint: True
+        temporal_conv: True
+        temporal_attention: True
+        temporal_selfatt_only: True
+        use_relative_position: False
+        use_causal_attention: False
+        temporal_length: 16
+        image_cross_attention: True
+        image_cross_attention_scale_learnable: True
+        default_fs: 30
+        fs_condition: True
+        action_control: True
+        action_control_scale: 1.0
+        state_control: True
+        state_control_scale: 1.0
+
+        unet_head_config:
+          target: unifolm_wma.modules.networks.action_unet.GlobalConditionUnet1D
+          params:
+            input_dim: ${model.params.agent_action_dim}
+            global_cond_dim: 1024
+            diffusion_step_embed_dim: 256
+            down_dims: [256, 512, 1024]
+            kernel_size: 5
+            n_groups: 8
+            cond_predict_scale: True
+
+        lossconfig:
+          target: torch.nn.Identity
+
+    cond_stage_config:
+      target: unifolm_wma.modules.encoders.condition.FrozenOpenCLIPEmbedder
+      params:
+        freeze: True
+        layer: "penultimate"
+
+    img_cond_stage_config:
+      target: unifolm_wma.modules.encoders.condition.FrozenOpenCLIPImageEmbedderV2
+      params:
+        freeze: true
+
+    image_proj_stage_config:
+      target: unifolm_wma.modules.encoders.resampler.Resampler
+      params:
+        dim: 1024
+        depth: 4
+        dim_head: 64
+        heads: 12
+        num_queries: 16
+        embedding_dim: 1280
+        output_dim: 1024
+        ff_mult: 4
+        video_length: ${model.params.wma_config.params.temporal_length}
+
+  normalization_config:
+    input_shapes:
+      observation.state: ${model.params.wma_config.params.unet_head_config.params.input_dim}
+    input_normalization_modes:
+      observation.state: 'min_max'
+    output_shapes:
+      action: ${model.params.wma_config.params.unet_head_config.params.input_dim}
+    output_normalization_modes:
+      action: 'min_max'
+
+data:
+  target: unifolm_wma.utils.data.DataModuleFromConfig
+  params:
+    batch_size: 4
+    num_workers: 8
+    wrap: False
+    train:
+      target: unifolm_wma.data.wma_data.WMAData
+      params:
+        data_dir: '/data6/user24215463/unifolm_data_wma'
+        video_length: ${model.params.wma_config.params.temporal_length}
+        frame_stride: 2
+        load_raw_resolution: True
+        resolution: [320, 512]
+        spatial_transform: resize_center_crop
+        crop_resolution: [320, 512]
+        random_fs: False
+        cond_robot_label_prob: 0.0
+        normalization_mode: 'min_max'
+        individual_normalization: True
+        n_obs_steps: ${model.params.n_obs_steps_imagen}
+        max_action_dim: ${model.params.agent_action_dim}
+        max_state_dim: ${model.params.agent_state_dim}
+    dataset_and_weights:
+      D1_Grasp_v1: 1.0
+
+lightning:
+  precision: 16
+  trainer:
+    benchmark: True
+    accumulate_grad_batches: 2
+    max_steps: 300000
+    log_every_n_steps: 50
+    val_check_interval: 1.0

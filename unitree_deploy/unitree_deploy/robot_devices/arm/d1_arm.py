@@ -46,15 +46,18 @@ class D1_ArmController:
                 }
             )
 
-        # ===== only config params (no logic change) =====
-        setattr(config, "use_relative_mapping", True)
-        setattr(config, "z1_to_d1_index", [0, 1, 2, 3, 4, 5, 6])
-        setattr(config, "d1_delta_gain", [0.90, 0.65, 0.65, 0.90, 0.65, 0.65, 1.00])
-        # setattr(config, "d1_delta_gain", [1, 1, 1, 1, 1, 1, 1])
-        # 可选：如果你发现某些关节方向反了，再改这里的符号
-        # 先给一个常见的候选（肩/肘可能方向相反），不确定就先全 1
-        setattr(config, "d1_joint_sign", [1, 1, 1, 1, 1, 1, 1])
-        setattr(config, "d1_offset_rad", [0, 0, 0, 0, 0, 0, 0])
+        # D1 fine-tuned checkpoints should execute in D1 absolute joint space by default.
+        # Keep these attributes configurable if the caller explicitly provides them.
+        if not hasattr(config, "use_relative_mapping"):
+            setattr(config, "use_relative_mapping", False)
+        if not hasattr(config, "z1_to_d1_index"):
+            setattr(config, "z1_to_d1_index", [0, 1, 2, 3, 4, 5, 6])
+        if not hasattr(config, "d1_delta_gain"):
+            setattr(config, "d1_delta_gain", [1, 1, 1, 1, 1, 1, 1])
+        if not hasattr(config, "d1_joint_sign"):
+            setattr(config, "d1_joint_sign", [1, 1, 1, 1, 1, 1, 1])
+        if not hasattr(config, "d1_offset_rad"):
+            setattr(config, "d1_offset_rad", [0, 0, 0, 0, 0, 0, 0])
 
         self.config = config
 
@@ -129,13 +132,13 @@ class D1_ArmController:
         # Speed limits are enforced *in addition* to interpolator speed limits.
         # These are in DEG/S because D1 uses degrees on-wire.
         # self.max_joint_speed_deg_s = float(getattr(config, "max_joint_speed_deg_s", 20.0))   # joints 0-5
-        self.max_joint_speed_deg_s = float(getattr(config, "max_joint_speed_deg_s", 10.0))   # joints 0-5
+        self.max_joint_speed_deg_s = float(getattr(config, "max_joint_speed_deg_s", 90.0))   # joints 0-5
         self.max_gripper_speed_deg_s = float(getattr(config, "max_gripper_speed_deg_s", 40.0))  # joint 6
         # EMA low-pass smoothing on commanded position (deg). 0 disables.
-        self.ema_alpha = float(getattr(config, "ema_alpha", 0.15))
+        self.ema_alpha = float(getattr(config, "ema_alpha", 0.0))
         self.ema_alpha = float(np.clip(self.ema_alpha, 0.0, 1.0))
         # Warmup blending time (seconds): blend from measured pose -> policy pose.
-        self.warmup_seconds = float(getattr(config, "warmup_seconds", 1.5))
+        self.warmup_seconds = float(getattr(config, "warmup_seconds", 0.0))
         self.warmup_seconds = max(0.0, self.warmup_seconds)
 
 

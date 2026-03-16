@@ -47,7 +47,7 @@ ZERO_ACTION = {
     'z1_realsense': torch.zeros(7, dtype=torch.float32),
 
     # D1: pad to 16 for server (it will map/mask internally)
-    'd1_opencv_slave': torch.zeros(16, dtype=torch.float32),
+    'd1_opencv_slave': torch.zeros(7, dtype=torch.float32),
 }
 
 CAM_KEY = {
@@ -61,29 +61,17 @@ CAM_KEY = {
 # fmt: on
 
 
-def _pad_to_16(x: np.ndarray) -> np.ndarray:
-    """Pad 1D array to length 16 (float32)."""
-    x = np.asarray(x, dtype=np.float32).reshape(-1)
-    if x.shape[0] >= 16:
-        return x[:16].copy()
-    out = np.zeros((16,), dtype=np.float32)
-    out[: x.shape[0]] = x
-    return out
-
-
 def prepare_observation(args: argparse.Namespace, obs: Any) -> OrderedDict:
     """
     Convert a raw env observation into the model's expected input dict.
     - image: RGB uint8 -> torch (C,H,W)
-    - state: for D1 pad to 16
-    - action: zeros (length 16 for D1; original for others)
+    - state: keep the robot's native state dimension (D1 stays 7D)
+    - action: zeros in the robot's native action dimension
     """
     bgr = obs.observation["images"][CAM_KEY[args.robot_type]]
     rgb_image = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
     qpos = obs.observation["qpos"]
-    if args.robot_type.startswith("d1"):
-        qpos = _pad_to_16(qpos)
 
     observation = {
         "observation.images.top": torch.from_numpy(rgb_image).permute(2, 0, 1),
