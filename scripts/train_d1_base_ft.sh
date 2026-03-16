@@ -4,7 +4,7 @@ set -euo pipefail
 cd /data6/user24215463/unifolm-world-model-action
 mkdir -p /data6/user24215463/unifolm_checkpoints/D1_Base_FT
 
-export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-1}
 export MASTER_ADDR=${MASTER_ADDR:-127.0.0.1}
 export MASTER_PORT=${MASTER_PORT:-12366}
 

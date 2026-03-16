@@ -78,9 +78,16 @@ model:
         in_channels: 8
         out_channels: 4
         model_channels: 320
-        attention_resolutions: [4, 2, 1]
+        attention_resolutions:
+          - 4
+          - 2
+          - 1
         num_res_blocks: 2
-        channel_mult: [1, 2, 4, 4]
+        channel_mult:
+          - 1
+          - 2
+          - 4
+          - 4
         dropout: 0.1
         num_head_channels: 64
         transformer_depth: 1
@@ -93,26 +100,87 @@ model:
         use_relative_position: False
         use_causal_attention: False
         temporal_length: 16
+        addition_attention: True
         image_cross_attention: True
-        image_cross_attention_scale_learnable: True
-        default_fs: 30
+        default_fs: 10
         fs_condition: True
-        action_control: True
-        action_control_scale: 1.0
-        state_control: True
-        state_control_scale: 1.0
+        cross_attention_scale_learnable: False
+        n_obs_steps: ${model.params.n_obs_steps_imagen}
+        num_stem_token: 16
+        base_model_gen_only: False
 
         unet_head_config:
-          target: unifolm_wma.modules.networks.action_unet.GlobalConditionUnet1D
+          target: unifolm_wma.models.diffusion_head.conditional_unet1d.ConditionalUnet1D
           params:
             input_dim: ${model.params.agent_action_dim}
-            global_cond_dim: 1024
-            diffusion_step_embed_dim: 256
-            down_dims: [256, 512, 1024]
+            n_obs_steps: ${model.params.n_obs_steps_acting}
+            diffusion_step_embed_dim: 128
+            down_dims: [256, 512, 1024, 2048]
             kernel_size: 5
             n_groups: 8
             cond_predict_scale: True
+            num_head_channels: ${model.params.wma_config.params.num_head_channels}
+            horizon: ${model.params.wma_config.params.temporal_length}
+            use_linear_attn: ${model.params.wma_config.params.use_linear}
+            use_linear_act_proj: True
+            act_proj_dim: 32
+            cond_cross_attention: False
+            context_dims: []
+            image_size: ${model.params.image_size}
+            imagen_cond_gradient: True
+            last_frame_only: False
+            use_imagen_mid_only: False
+            use_z_only: False
 
+            obs_encoder_config:
+              target: unifolm_wma.models.diffusion_head.vision.multi_image_obs_encoder.MultiImageObsEncoder
+              params:
+                rgb_model_config:
+                  target: unifolm_wma.models.diffusion_head.vision.model_getter.get_resnet
+                  params:
+                    name: resnet18
+                    weights: null
+                resize_shape: null
+                crop_shape: null
+                random_crop: False
+                use_group_norm: True
+                share_rgb_model: False
+                imagenet_norm: True
+                use_spatial_softmax: True
+                spatial_softmax_kp: 128
+
+        stem_process_config:
+          target: unifolm_wma.modules.encoders.condition.SATokenProjector
+          params:
+            dim: 1024
+            depth: 1
+            dim_head: 64
+            heads: 16
+            num_queries: ${model.params.wma_config.params.num_stem_token}
+            output_dim: 1024
+            ff_mult: 4
+            chunk_size: ${model.params.wma_config.params.temporal_length}
+
+    first_stage_config:
+      target: unifolm_wma.models.autoencoder.AutoencoderKL
+      params:
+        embed_dim: 4
+        monitor: val/rec_loss
+        ddconfig:
+          double_z: True
+          z_channels: 4
+          resolution: 256
+          in_channels: 3
+          out_ch: 3
+          ch: 128
+          ch_mult:
+            - 1
+            - 2
+            - 4
+            - 4
+          num_res_blocks: 2
+          attn_resolutions: []
+          dropout: 0.0
         lossconfig:
           target: torch.nn.Identity
 
@@ -153,8 +221,8 @@ model:
 data:
   target: unifolm_wma.utils.data.DataModuleFromConfig
   params:
-    batch_size: 4
-    num_workers: 8
+    batch_size: 8
+    num_workers: 12
     wrap: False
     train:
       target: unifolm_wma.data.wma_data.WMAData
@@ -184,3 +252,30 @@ lightning:
     max_steps: 300000
     log_every_n_steps: 50
     val_check_interval: 1.0
+    gradient_clip_algorithm: 'norm'
+    gradient_clip_val: 0.5
+    enable_model_summary: False
+  callbacks:
+    model_checkpoint:
+      target: pytorch_lightning.callbacks.ModelCheckpoint
+      params:
+        every_n_train_steps: 1000
+        filename: "{epoch}-{step}"
+        save_weights_only: True
+    metrics_over_trainsteps_checkpoint:
+      target: pytorch_lightning.callbacks.ModelCheckpoint
+      params:
+        filename: '{epoch}-{step}'
+        save_weights_only: True
+        every_n_train_steps: 10000
+    batch_logger:
+      target: unifolm_wma.utils.callbacks.ImageLogger
+      params:
+        batch_frequency: 20000
+        to_local: False
+        max_images: 8
+        log_images_kwargs:
+          ddim_steps: 16
+          unconditional_guidance_scale: 1.0
+          timestep_spacing: uniform_trailing
+          guidance_rescale: 0.7
